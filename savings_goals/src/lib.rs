@@ -4,6 +4,8 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
     Symbol, Vec,
 };
+extern crate alloc;
+use alloc::string::ToString;
 
 // Event topics
 const GOAL_CREATED: Symbol = symbol_short!("created");
@@ -87,8 +89,9 @@ pub struct SavingsSchedule {
     pub missed_count: u32,
 }
 
-#[contracttype]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[contracterror]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
 pub enum SavingsGoalsError {
     InvalidAmount = 1,
     GoalNotFound = 2,
@@ -96,49 +99,7 @@ pub enum SavingsGoalsError {
     GoalLocked = 4,
     InsufficientBalance = 5,
     Overflow = 6,
-}
-
-impl From<SavingsGoalsError> for soroban_sdk::Error {
-    fn from(err: SavingsGoalsError) -> Self {
-        match err {
-            SavingsGoalsError::InvalidAmount => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::InvalidInput,
-            )),
-            SavingsGoalsError::GoalNotFound => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::MissingValue,
-            )),
-            SavingsGoalsError::Unauthorized => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::InvalidAction,
-            )),
-            SavingsGoalsError::GoalLocked => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::InvalidAction,
-            )),
-            SavingsGoalsError::InsufficientBalance => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::InvalidInput,
-            )),
-            SavingsGoalsError::Overflow => soroban_sdk::Error::from((
-                soroban_sdk::xdr::ScErrorType::Contract,
-                soroban_sdk::xdr::ScErrorCode::InvalidInput,
-            )),
-        }
-    }
-}
-
-impl From<&SavingsGoalsError> for soroban_sdk::Error {
-    fn from(err: &SavingsGoalsError) -> Self {
-        (*err).into()
-    }
-}
-
-impl From<soroban_sdk::Error> for SavingsGoalsError {
-    fn from(_err: soroban_sdk::Error) -> Self {
-        SavingsGoalsError::Unauthorized
-    }
+    InvalidGoalName = 7,
 }
 
 #[contracttype]
@@ -222,6 +183,7 @@ pub enum SavingsGoalError {
     UnsupportedVersion = 6,
     /// Snapshot checksum does not match the recomputed digest.
     ChecksumMismatch = 7,
+    InvalidGoalName = 11,
 }
 #[contract]
 pub struct SavingsGoalContract;
@@ -244,6 +206,23 @@ impl SavingsGoalContract {
         } else {
             limit
         }
+    }
+
+    fn validate_goal_name(name: &String) -> Result<(), SavingsGoalsError> {
+        let name_len = name.len();
+        if name_len == 0 || name_len > 32 {
+            return Err(SavingsGoalsError::InvalidGoalName);
+        }
+        
+        let mut string_bytes = alloc::vec::Vec::new();
+        name.to_string().as_bytes().iter().for_each(|&b| string_bytes.push(b));
+        for byte in string_bytes {
+            // Allow printable ASCII characters (32 to 126 inclusive)
+            if byte < 32 || byte > 126 {
+                return Err(SavingsGoalsError::InvalidGoalName);
+            }
+        }
+        Ok(())
     }
 
     fn get_pause_admin(env: &Env) -> Option<Address> {
@@ -421,9 +400,9 @@ impl SavingsGoalContract {
                     panic!("Unauthorized: bootstrap requires caller == new_admin");
                 }
             }
-            Some(current_admin) => {
+            Some(ref current_admin) => {
                 // Admin transfer - only current admin can transfer
-                if current_admin != caller {
+                if *current_admin != caller {
                     panic!("Unauthorized: only current upgrade admin can transfer");
                 }
             }
@@ -603,6 +582,11 @@ impl SavingsGoalContract {
         if target_amount <= 0 {
             Self::append_audit(&env, symbol_short!("create"), &owner, false);
             return Err(SavingsGoalsError::InvalidAmount);
+        }
+
+        if let Err(e) = Self::validate_goal_name(&name) {
+            Self::append_audit(&env, symbol_short!("create"), &owner, false);
+            return Err(e);
         }
 
         Self::extend_instance_ttl(&env);

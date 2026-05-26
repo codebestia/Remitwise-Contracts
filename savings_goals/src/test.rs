@@ -58,6 +58,77 @@ fn test_create_goal_allows_past_target_date() {
 // init() idempotency and NEXT_ID behavior
 //
 // init() bootstraps storage (NEXT_ID and GOALS) only when keys are missing.
+
+#[test]
+fn test_create_goal_empty_name_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    client.init();
+
+    let name = String::from_str(&env, "");
+    let res = client.try_create_goal(&user, &name, &1000, &1735689600);
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err().unwrap(),
+        SavingsGoalsError::InvalidGoalName
+    );
+}
+
+#[test]
+fn test_create_goal_max_len_name_succeeds() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    client.init();
+
+    // 32 chars
+    let name = String::from_str(&env, "Test Goal Name Exactly 32 Chars.");
+    let id = client.create_goal(&user, &name, &1000, &1735689600);
+    assert_eq!(id, 1);
+}
+
+#[test]
+fn test_create_goal_over_max_len_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    client.init();
+
+    // 33 chars
+    let name = String::from_str(&env, "Test Goal Name Exactly 33 Chars..");
+    let res = client.try_create_goal(&user, &name, &1000, &1735689600);
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err().unwrap(),
+        SavingsGoalsError::InvalidGoalName
+    );
+}
+
+#[test]
+fn test_create_goal_control_char_fails() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+    let user = Address::generate(&env);
+    client.init();
+
+    // Contains newline \n
+    let name = String::from_str(&env, "Goal\nName");
+    let res = client.try_create_goal(&user, &name, &1000, &1735689600);
+    assert!(res.is_err());
+    assert_eq!(
+        res.unwrap_err().unwrap(),
+        SavingsGoalsError::InvalidGoalName
+    );
+}
 // In production or integration, init() may be called more than once (e.g. by
 // different entrypoints or upgrade paths). These tests lock in that:
 // - A second init() must not remove or alter existing goals.
