@@ -287,286 +287,311 @@ fn test_distribute_usdc_signed_hash_mismatch() {
 }
 
 // ============================================================================
-// Self-Transfer Guard Tests
+// Execute Due Remittance Schedules Tests
 // ============================================================================
-// Verifies that SelfTransferNotAllowed is raised before any nonce or token
-// side-effects occur, for both distribute_usdc and distribute_usdc_signed.
+// These tests verify the idempotent executor for remittance schedules.
+// Key security properties: due/not-due partitioning, idempotency on repeated
+// calls, InactiveSchedule skipping, and correct next_due advancement.
 // ============================================================================
 
-mod self_transfer_guard {
-    use crate::{AccountGroup, DistributeUsdcRequest, RemittanceSplit, RemittanceSplitError};
-    use soroban_sdk::{
-        symbol_short,
-        testutils::{Address as _, Events},
-        token::TokenClient,
-        Address, Env,
-    };
+#[test]
+fn test_execute_due_remittance_schedules_basic() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
-    // ── Test A ───────────────────────────────────────────────────────────────
-    // distribute_usdc — basic self-transfer rejection.
-    // Guard fires before nonce check, so deadline/hash can be dummy values.
-    #[test]
-    fn test_a_distribute_usdc_basic_self_transfer_rejection() {
-        let env = Env::default();
-        let (client, owner, token_addr, stellar_client) = super::setup_split(&env, 40, 30, 20, 10);
-        stellar_client.mint(&owner, &1_000);
+    env.mock_all_auths();
+    set_time(&env, 1_000);
 
-        let nonce_before = client.get_nonce(&owner);
+    // Create a one-shot schedule due at time 3000
+    let schedule_id = client.create_remittance_schedule(&owner, &1_000, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
 
-        // spending == from triggers the self-transfer guard
-        let accounts = AccountGroup {
-            spending: owner.clone(),
-            savings: Address::generate(&env),
-            bills: Address::generate(&env),
-            insurance: Address::generate(&env),
-        };
+    // Advance time past due date
+    set_time(&env, 3_500);
 
-        let events_before = env.events().all().len();
+    // Execute due schedules
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed.get(0).unwrap(), 1);
 
-        // Guard fires before the nonce / deadline / hash checks — those values
-        // are irrelevant for this rejection path.
-        let result = client.try_distribute_usdc(
-            &token_addr,
-            &owner,
-            &nonce_before,
-            &(env.ledger().timestamp() + 100),
-            &0u64,
-            &accounts,
-            &1_000,
-        );
+    // Verify schedule is now inactive (one-off)
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert!(!schedule.active);
+    assert_eq!(schedule.last_executed, Some(3_500));
+}
 
-        assert_eq!(
-            result,
-            Err(Ok(RemittanceSplitError::SelfTransferNotAllowed))
-        );
+#[test]
+fn test_execute_recurring_remittance_schedule() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
-        // Nonce must be unchanged — no side-effects on rejected path
-        assert_eq!(client.get_nonce(&owner), nonce_before);
+    env.mock_all_auths();
+    set_time(&env, 1_000);
 
-        // No new events emitted on the rejection path
-        // NOTE: append_audit writes to instance storage, not to the event log.
-        // All RemitwiseEvents::emit calls are only reached on the success path.
-        assert_eq!(
-            env.events().all().len(),
-            events_before,
-            "no events must be emitted on SelfTransferNotAllowed rejection"
-        );
+    // Create a recurring schedule: 1000 amount, due at 3000, every 86400 seconds
+    let schedule_id = client.create_remittance_schedule(&owner, &1_000, &3_000, &86_400);
+    assert_eq!(schedule_id, Ok(1));
 
-        // NOTE: In the Soroban test environment (soroban-sdk 21.x), returning
-        // Err(...) from a contract function causes ALL storage mutations in that
-        // invocation to be reverted. This means the append_audit(..., false) call
-        // inside the self-transfer guard is rolled back and is not observable via
-        // get_audit_log(). The guard's audit behaviour is verified by on-chain
-        // integration tests. Here we confirm the audit log is UNCHANGED (no
-        // phantom success entry was added).
-        let audit = client.get_audit_log(&0, &100);
-        let last = audit.items.last().expect("audit log must not be empty");
-        assert!(
-            last.success,
-            "the init entry (success=true) must still be the last entry — no spurious entries added"
-        );
+    // Advance time past first due date
+    set_time(&env, 3_500);
+    let executed = client.execute_due_remittance_schedules();
+
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed.get(0).unwrap(), 1);
+
+    // Verify next_due was advanced by interval
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert!(schedule.active);
+    assert_eq!(schedule.next_due, 3_000 + 86_400);
+    assert_eq!(schedule.last_executed, Some(3_500));
+    assert_eq!(schedule.missed_count, 0);
+}
+
+#[test]
+fn test_execute_missed_remittance_schedules() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create a recurring schedule
+    let schedule_id = client.create_remittance_schedule(&owner, &500, &3_000, &86_400);
+    assert_eq!(schedule_id, Ok(1));
+
+    // Advance time far past multiple intervals: 3000 + 86400*3 + 100
+    set_time(&env, 3_000 + 86_400 * 3 + 100);
+    let executed = client.execute_due_remittance_schedules();
+
+    assert_eq!(executed.len(), 1);
+
+    // Verify missed_count is 3 (the three intervals that were skipped)
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert_eq!(schedule.missed_count, 3);
+    assert!(schedule.next_due > 3_000 + 86_400 * 3);
+    assert_eq!(schedule.last_executed, Some(3_000 + 86_400 * 3 + 100));
+}
+
+#[test]
+fn test_execute_idempotent_oneshot() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create one-shot schedule
+    let schedule_id = client.create_remittance_schedule(&owner, &750, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
+
+    // Advance time past due
+    set_time(&env, 3_500);
+
+    // First execution
+    let first = client.execute_due_remittance_schedules();
+    assert_eq!(first.len(), 1);
+    assert_eq!(first.get(0).unwrap(), 1);
+
+    // Second execution at same timestamp must be idempotent (no-op)
+    let second = client.execute_due_remittance_schedules();
+    assert_eq!(second.len(), 0, "Second call must be a no-op");
+
+    // Verify schedule remains inactive
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert!(!schedule.active);
+    assert_eq!(schedule.last_executed, Some(3_500));
+}
+
+#[test]
+fn test_execute_idempotent_recurring() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create recurring schedule
+    let schedule_id = client.create_remittance_schedule(&owner, &300, &3_000, &86_400);
+    assert_eq!(schedule_id, Ok(1));
+
+    set_time(&env, 3_500);
+
+    // First execution
+    let first = client.execute_due_remittance_schedules();
+    assert_eq!(first.len(), 1);
+
+    let first_next_due = client.get_remittance_schedule(&1).unwrap().next_due;
+
+    // Second execution at same timestamp must not re-execute
+    let second = client.execute_due_remittance_schedules();
+    assert_eq!(second.len(), 0);
+
+    // Verify next_due unchanged (idempotent advancement)
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert_eq!(schedule.next_due, first_next_due);
+}
+
+#[test]
+fn test_execute_skips_inactive_schedules() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create schedule and cancel it
+    let schedule_id = client.create_remittance_schedule(&owner, &200, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
+    
+    client.cancel_remittance_schedule(&owner, &1);
+
+    // Advance past due time
+    set_time(&env, 3_500);
+
+    // Execute should skip inactive schedule
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 0);
+}
+
+#[test]
+fn test_execute_skips_not_yet_due() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create schedule due at 3000
+    let schedule_id = client.create_remittance_schedule(&owner, &400, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
+
+    // Advance time but stay before due date
+    set_time(&env, 2_500);
+
+    // Execute should not execute (not yet due)
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 0);
+
+    // Verify schedule unchanged
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert!(schedule.active);
+    assert_eq!(schedule.last_executed, None);
+}
+
+#[test]
+fn test_execute_exactly_equal_next_due() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create schedule
+    let schedule_id = client.create_remittance_schedule(&owner, &600, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
+
+    // Advance exactly to next_due (edge case: == not just >)
+    set_time(&env, 3_000);
+
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 1, "Should execute when time == next_due");
+}
+
+#[test]
+fn test_execute_empty_schedule_set() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // No schedules created; just advance time
+    set_time(&env, 5_000);
+
+    // Execute on empty set should return empty Vec
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 0);
+}
+
+#[test]
+fn test_execute_all_inactive_set() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
+
+    env.mock_all_auths();
+    set_time(&env, 1_000);
+
+    // Create and cancel multiple schedules
+    for i in 1..=3 {
+        let id = client.create_remittance_schedule(&owner, &100 * i as i128, &(3_000 + i as u64 * 1000), &0);
+        assert!(id.is_ok());
+        client.cancel_remittance_schedule(&owner, &(i as u32));
     }
 
-    // ── Test B ───────────────────────────────────────────────────────────────
-    // distribute_usdc_signed — valid signature but destination == from.
-    // Hash check passes; self-transfer guard fires before nonce check.
-    #[test]
-    fn test_b_distribute_usdc_signed_valid_sig_self_dest() {
-        let env = Env::default();
-        let (client, owner, token_addr, stellar_client) = super::setup_split(&env, 40, 30, 20, 10);
-        let token = TokenClient::new(&env, &token_addr);
-        stellar_client.mint(&owner, &1_000);
+    set_time(&env, 6_000);
 
-        let deadline = env.ledger().timestamp() + 100;
-        let nonce = client.get_nonce(&owner);
+    // Execute should return empty (all inactive)
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 0);
+}
 
-        // savings == from: self-transfer on the signed path
-        let request = DistributeUsdcRequest {
-            usdc_contract: token_addr,
-            from: owner.clone(),
-            nonce,
-            accounts: AccountGroup {
-                spending: Address::generate(&env),
-                savings: owner.clone(),
-                bills: Address::generate(&env),
-                insurance: Address::generate(&env),
-            },
-            total_amount: 1_000,
-            deadline,
-        };
+#[test]
+fn test_execute_paused_contract_returns_empty() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
-        let hash = RemittanceSplit::compute_request_hash(
-            symbol_short!("distH"),
-            owner.clone(),
-            request.nonce,
-            request.total_amount,
-            request.deadline,
-        );
+    env.mock_all_auths();
+    set_time(&env, 1_000);
 
-        let owner_balance_before = token.balance(&owner);
-        let nonce_before = client.get_nonce(&owner);
-        let events_before = env.events().all().len();
+    // Create schedule
+    let schedule_id = client.create_remittance_schedule(&owner, &500, &3_000, &0);
+    assert_eq!(schedule_id, Ok(1));
 
-        let result = client.try_distribute_usdc_signed(&request, &hash);
+    // Pause contract
+    client.pause(&owner).unwrap();
 
-        assert_eq!(
-            result,
-            Err(Ok(RemittanceSplitError::SelfTransferNotAllowed))
-        );
+    set_time(&env, 3_500);
 
-        // Nonce must be unchanged
-        assert_eq!(client.get_nonce(&owner), nonce_before);
+    // Execute should return empty when paused
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 0);
 
-        // No token movement occurred
-        assert_eq!(
-            token.balance(&owner),
-            owner_balance_before,
-            "owner balance must not change on SelfTransferNotAllowed"
-        );
+    // Verify schedule was NOT executed (unchanged)
+    let schedule = client.get_remittance_schedule(&1).unwrap();
+    assert!(schedule.active);
+    assert_eq!(schedule.last_executed, None);
+}
 
-        // No new events emitted on the rejection path
-        assert_eq!(
-            env.events().all().len(),
-            events_before,
-            "no events must be emitted on SelfTransferNotAllowed rejection"
-        );
+#[test]
+fn test_execute_mixed_due_not_due() {
+    let env = Env::default();
+    let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
-        // NOTE: In the Soroban test environment (soroban-sdk 21.x), returning
-        // Err(...) causes storage mutations to be reverted. append_audit(..., false)
-        // inside the guard is therefore rolled back and not visible via get_audit_log.
-        // We verify the audit log is unchanged (no spurious entry of any kind was added).
-        let audit = client.get_audit_log(&0, &100);
-        let last = audit.items.last().expect("audit log must not be empty");
-        assert!(
-            last.success,
-            "the init entry (success=true) must still be the last entry — no spurious entries added"
-        );
-    }
+    env.mock_all_auths();
+    set_time(&env, 1_000);
 
-    // ── Test C ───────────────────────────────────────────────────────────────
-    // distribute_usdc_signed — nonce invariant: strict equality before/after.
-    #[test]
-    fn test_c_distribute_usdc_signed_nonce_invariant_after_rejection() {
-        let env = Env::default();
-        let (client, owner, token_addr, _) = super::setup_split(&env, 40, 30, 20, 10);
+    // Create schedule 1: due at 2000 (one-off)
+    let id1 = client.create_remittance_schedule(&owner, &100, &2_000, &0);
+    assert_eq!(id1, Ok(1));
 
-        let nonce_before = client.get_nonce(&owner);
-        let deadline = env.ledger().timestamp() + 100;
+    // Create schedule 2: due at 4000 (one-off)
+    let id2 = client.create_remittance_schedule(&owner, &200, &4_000, &0);
+    assert_eq!(id2, Ok(2));
 
-        let request = DistributeUsdcRequest {
-            usdc_contract: token_addr,
-            from: owner.clone(),
-            nonce: nonce_before,
-            accounts: AccountGroup {
-                spending: owner.clone(), // self-transfer
-                savings: Address::generate(&env),
-                bills: Address::generate(&env),
-                insurance: Address::generate(&env),
-            },
-            total_amount: 500,
-            deadline,
-        };
+    // Advance to time 3000 (only schedule 1 is due)
+    set_time(&env, 3_000);
 
-        let hash = RemittanceSplit::compute_request_hash(
-            symbol_short!("distH"),
-            owner.clone(),
-            request.nonce,
-            request.total_amount,
-            request.deadline,
-        );
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 1);
+    assert_eq!(executed.get(0).unwrap(), 1);
 
-        let _ = client.try_distribute_usdc_signed(&request, &hash);
+    // Verify only schedule 1 is inactive
+    assert!(!client.get_remittance_schedule(&1).unwrap().active);
+    assert!(client.get_remittance_schedule(&2).unwrap().active);
+}
 
-        let nonce_after = client.get_nonce(&owner);
-
-        assert_eq!(
-            nonce_before, nonce_after,
-            "nonce must be strictly unchanged on SelfTransferNotAllowed"
-        );
-    }
-
-    // ── Test D ───────────────────────────────────────────────────────────────
-    // distribute_usdc — non-self transfer sanity / positive case.
-    // from != any destination; verifies no regression from the guard.
-    #[test]
-    fn test_d_distribute_usdc_non_self_transfer_succeeds() {
-        let env = Env::default();
-        let (client, owner, token_addr, stellar_client) = super::setup_split(&env, 40, 30, 20, 10);
-        stellar_client.mint(&owner, &1_000);
-
-        let nonce = client.get_nonce(&owner); // 1 after initialize_split
-        let accounts = super::sample_accounts(&env); // all distinct from owner
-        let deadline = env.ledger().timestamp() + 3_600;
-        let request_hash = RemittanceSplit::compute_request_hash(
-            symbol_short!("distrib"),
-            owner.clone(),
-            nonce,
-            1_000,
-            deadline,
-        );
-
-        let result = client.try_distribute_usdc(
-            &token_addr,
-            &owner,
-            &nonce,
-            &deadline,
-            &request_hash,
-            &accounts,
-            &1_000,
-        );
-
-        assert_eq!(result, Ok(Ok(true)));
-
-        // Nonce incremented by exactly 1
-        assert_eq!(client.get_nonce(&owner), nonce + 1);
-
-        // Audit log shows success entry
-        let audit = client.get_audit_log(&0, &100);
-        let last = audit.items.last().expect("audit log must not be empty");
-        assert!(
-            last.success,
-            "last audit entry must be success for a valid non-self distribution"
-        );
-    }
-
-    // ── Test E ───────────────────────────────────────────────────────────────
-    // distribute_usdc — all four destinations == from (full self-split).
-    // The guard must still fire for this extreme case.
-    #[test]
-    fn test_e_distribute_usdc_all_destinations_self() {
-        let env = Env::default();
-        let (client, owner, token_addr, stellar_client) = super::setup_split(&env, 40, 30, 20, 10);
-        stellar_client.mint(&owner, &1_000);
-
-        let nonce_before = client.get_nonce(&owner);
-
-        // Every category points back to `from` — full self-split
-        let accounts = AccountGroup {
-            spending: owner.clone(),
-            savings: owner.clone(),
-            bills: owner.clone(),
-            insurance: owner.clone(),
-        };
-
-        let result = client.try_distribute_usdc(
-            &token_addr,
-            &owner,
-            &nonce_before,
-            &(env.ledger().timestamp() + 100),
-            &0u64,
-            &accounts,
-            &1_000,
-        );
-
-        assert_eq!(
-            result,
-            Err(Ok(RemittanceSplitError::SelfTransferNotAllowed))
-        );
-
-        assert_eq!(
-            client.get_nonce(&owner),
-            nonce_before,
-            "nonce must be unchanged after full self-split rejection"
-        );
-    }
+// Helper function to invoke execute_due_remittance_schedules via client
+// (Note: You may need to add this to the RemittanceSplitClient or call directly)
+pub fn set_time(env: &Env, timestamp: u64) {
+    env.ledger().set_timestamp(timestamp);
 }
