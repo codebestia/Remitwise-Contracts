@@ -579,12 +579,50 @@ pub fn import_from_binary(
 }
 
 /// Legacy helper for callers that do not need replay tracking.
+///
+/// # Validation contract
+///
+/// Despite the "untracked" name, this function enforces the **full import safety
+/// contract** by delegating to [`import_from_json`]:
+///
+/// 1. **Size guard** – rejects snapshots larger than [`MAX_MIGRATION_SNAPSHOT_BYTES`]
+///    before deserialisation to prevent DoS.
+/// 2. **Version check** – calls [`ExportSnapshot::is_version_compatible`], which
+///    requires `MIN_SUPPORTED_VERSION <= header.version <= SCHEMA_VERSION`.
+///    Snapshots with a future version or a below-minimum version are rejected with
+///    [`MigrationError::IncompatibleVersion`].
+/// 3. **Payload bounds** – validates record count and payload byte size.
+/// 4. **Checksum verification** – calls [`ExportSnapshot::verify_checksum`]; any
+///    tampered or corrupted snapshot is rejected with [`MigrationError::ChecksumMismatch`].
+///
+/// The only difference from [`import_from_json`] is that a throwaway
+/// [`MigrationTracker`] is used, so duplicate-import detection is not persisted
+/// across calls. Prefer [`import_from_json`] when replay protection is required.
 pub fn import_from_json_untracked(bytes: &[u8]) -> Result<ExportSnapshot, MigrationError> {
     let mut tracker = MigrationTracker::new();
     import_from_json(bytes, &mut tracker, 0)
 }
 
 /// Legacy helper for callers that do not need replay tracking.
+///
+/// # Validation contract
+///
+/// Despite the "untracked" name, this function enforces the **full import safety
+/// contract** by delegating to [`import_from_binary`]:
+///
+/// 1. **Size guard** – rejects snapshots larger than [`MAX_MIGRATION_SNAPSHOT_BYTES`]
+///    before deserialisation to prevent DoS.
+/// 2. **Version check** – calls [`ExportSnapshot::is_version_compatible`], which
+///    requires `MIN_SUPPORTED_VERSION <= header.version <= SCHEMA_VERSION`.
+///    Snapshots with a future version or a below-minimum version are rejected with
+///    [`MigrationError::IncompatibleVersion`].
+/// 3. **Payload bounds** – validates record count and payload byte size.
+/// 4. **Checksum verification** – calls [`ExportSnapshot::verify_checksum`]; any
+///    tampered or corrupted snapshot is rejected with [`MigrationError::ChecksumMismatch`].
+///
+/// The only difference from [`import_from_binary`] is that a throwaway
+/// [`MigrationTracker`] is used, so duplicate-import detection is not persisted
+/// across calls. Prefer [`import_from_binary`] when replay protection is required.
 pub fn import_from_binary_untracked(bytes: &[u8]) -> Result<ExportSnapshot, MigrationError> {
     let mut tracker = MigrationTracker::new();
     import_from_binary(bytes, &mut tracker, 0)
@@ -1345,6 +1383,98 @@ mod tests {
         }
         .to_string()
         .contains("5"));
+    }
+
+    // --- import_from_json_untracked / import_from_binary_untracked guard tests ---
+    // These tests verify that the "untracked" helpers enforce the full validation
+    // contract (checksum, version compatibility) even without a persistent tracker.
+
+    #[test]
+    fn test_import_from_json_untracked_rejects_bad_checksum() {
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Json);
+        snapshot.header.checksum = "deadbeef".into();
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        assert_eq!(
+            import_from_json_untracked(&bytes).unwrap_err(),
+            MigrationError::ChecksumMismatch
+        );
+    }
+
+    #[test]
+    fn test_import_from_binary_untracked_rejects_bad_checksum() {
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Binary);
+        snapshot.header.checksum = "deadbeef".into();
+        let bytes = bincode::serialize(&snapshot).unwrap();
+        assert_eq!(
+            import_from_binary_untracked(&bytes).unwrap_err(),
+            MigrationError::ChecksumMismatch
+        );
+    }
+
+    #[test]
+    fn test_import_from_json_untracked_rejects_future_version() {
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Json);
+        snapshot.header.version = SCHEMA_VERSION + 1;
+        // Recompute checksum so the version-check fires, not the checksum-check.
+        snapshot.header.checksum = snapshot.compute_checksum();
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        assert_eq!(
+            import_from_json_untracked(&bytes).unwrap_err(),
+            MigrationError::IncompatibleVersion {
+                found: SCHEMA_VERSION + 1,
+                min: MIN_SUPPORTED_VERSION,
+                max: SCHEMA_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn test_import_from_binary_untracked_rejects_future_version() {
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Binary);
+        snapshot.header.version = SCHEMA_VERSION + 1;
+        snapshot.header.checksum = snapshot.compute_checksum();
+        let bytes = bincode::serialize(&snapshot).unwrap();
+        assert_eq!(
+            import_from_binary_untracked(&bytes).unwrap_err(),
+            MigrationError::IncompatibleVersion {
+                found: SCHEMA_VERSION + 1,
+                min: MIN_SUPPORTED_VERSION,
+                max: SCHEMA_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn test_import_from_json_untracked_rejects_below_min_version() {
+        // MIN_SUPPORTED_VERSION is 1; use 0 as a below-minimum version.
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Json);
+        snapshot.header.version = MIN_SUPPORTED_VERSION.saturating_sub(1);
+        snapshot.header.checksum = snapshot.compute_checksum();
+        let bytes = serde_json::to_vec(&snapshot).unwrap();
+        assert_eq!(
+            import_from_json_untracked(&bytes).unwrap_err(),
+            MigrationError::IncompatibleVersion {
+                found: MIN_SUPPORTED_VERSION.saturating_sub(1),
+                min: MIN_SUPPORTED_VERSION,
+                max: SCHEMA_VERSION,
+            }
+        );
+    }
+
+    #[test]
+    fn test_import_from_binary_untracked_rejects_below_min_version() {
+        let mut snapshot = ExportSnapshot::new(sample_remittance_payload(), ExportFormat::Binary);
+        snapshot.header.version = MIN_SUPPORTED_VERSION.saturating_sub(1);
+        snapshot.header.checksum = snapshot.compute_checksum();
+        let bytes = bincode::serialize(&snapshot).unwrap();
+        assert_eq!(
+            import_from_binary_untracked(&bytes).unwrap_err(),
+            MigrationError::IncompatibleVersion {
+                found: MIN_SUPPORTED_VERSION.saturating_sub(1),
+                min: MIN_SUPPORTED_VERSION,
+                max: SCHEMA_VERSION,
+            }
+        );
     }
 
     // Property 1: Fault Condition — Untested Rejection Paths Return Correct Error Variants
