@@ -844,6 +844,10 @@ impl FamilyWallet {
         true
     }
 
+    /// Withdraw funds using the appropriate spending limit and multi-sig configuration.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn withdraw(
         env: Env,
         proposer: Address,
@@ -851,6 +855,7 @@ impl FamilyWallet {
         recipient: Address,
         amount: i128,
     ) -> u64 {
+        Self::require_not_paused(&env);
         if amount <= 0 {
             panic!("Amount must be positive");
         }
@@ -879,6 +884,10 @@ impl FamilyWallet {
         )
     }
 
+    /// Propose a split configuration change.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn propose_split_config_change(
         env: Env,
         proposer: Address,
@@ -887,6 +896,7 @@ impl FamilyWallet {
         bills_percent: u32,
         insurance_percent: u32,
     ) -> u64 {
+        Self::require_not_paused(&env);
         if spending_percent + savings_percent + bills_percent + insurance_percent != 100 {
             panic!("Percentages must sum to 100");
         }
@@ -904,12 +914,17 @@ impl FamilyWallet {
         )
     }
 
+    /// Propose a family member role change.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn propose_role_change(
         env: Env,
         proposer: Address,
         member: Address,
         new_role: FamilyRole,
     ) -> u64 {
+        Self::require_not_paused(&env);
         Self::propose_transaction(
             env,
             proposer,
@@ -918,6 +933,10 @@ impl FamilyWallet {
         )
     }
 
+    /// Propose or execute an emergency transfer.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn propose_emergency_transfer(
         env: Env,
         proposer: Address,
@@ -925,6 +944,7 @@ impl FamilyWallet {
         recipient: Address,
         amount: i128,
     ) -> u64 {
+        Self::require_not_paused(&env);
         if amount <= 0 {
             panic!("Amount must be positive");
         }
@@ -979,7 +999,12 @@ impl FamilyWallet {
         tx_id
     }
 
+    /// Propose a policy cancellation.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn propose_policy_cancellation(env: Env, proposer: Address, policy_id: u32) -> u64 {
+        Self::require_not_paused(&env);
         Self::propose_transaction(
             env,
             proposer,
@@ -1680,8 +1705,12 @@ impl FamilyWallet {
     ///
     /// # Security
     /// Only the Owner can set this value, and their role must not be expired.
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn set_proposal_expiry(env: Env, caller: Address, expiry: u64) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let owner: Address = env
             .storage()
             .instance()
@@ -1870,9 +1899,11 @@ impl FamilyWallet {
     ///
     /// # Panics
     /// - If caller lacks Owner role or higher
+    /// - If the contract is paused
     pub fn set_upgrade_admin(env: Env, caller: Address, new_admin: Address) -> bool {
         caller.require_auth();
         Self::require_role_at_least(&env, &caller, FamilyRole::Owner);
+        Self::require_not_paused(&env);
 
         let current_upgrade_admin = Self::get_upgrade_admin(&env);
 
@@ -1898,8 +1929,13 @@ impl FamilyWallet {
         Self::get_upgrade_admin(&env)
     }
 
+    /// Set the contract version (upgrade support).
+    ///
+    /// # Errors
+    /// Panics if the contract is paused.
     pub fn set_version(env: Env, caller: Address, new_version: u32) -> bool {
         caller.require_auth();
+        Self::require_not_paused(&env);
         let admin = Self::get_upgrade_admin(&env).unwrap_or_else(|| {
             env.storage()
                 .instance()
