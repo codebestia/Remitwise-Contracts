@@ -303,7 +303,10 @@ fn test_create_bill_frequency_max_accepted() {
         &String::from_str(&env, "XLM"),
         &None,
     );
-    assert!(result.is_ok(), "frequency_days = MAX_FREQUENCY_DAYS must be accepted");
+    assert!(
+        result.is_ok(),
+        "frequency_days = MAX_FREQUENCY_DAYS must be accepted"
+    );
 }
 
 /// frequency_days = MAX_FREQUENCY_DAYS + 1 (36_501)  →  InvalidFrequency
@@ -351,7 +354,10 @@ fn test_create_bill_frequency_zero_non_recurring_accepted() {
         &String::from_str(&env, "XLM"),
         &None,
     );
-    assert!(result.is_ok(), "frequency_days=0 on non-recurring bill must be accepted");
+    assert!(
+        result.is_ok(),
+        "frequency_days=0 on non-recurring bill must be accepted"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -434,7 +440,10 @@ fn test_recurring_child_due_date_independent_of_paid_at() {
     // Base formula: due_date + 30*86400 = 1_000_000 + 2_592_000 = 3_592_000
     // paid_at = 1_000_500 < 3_592_000 → no catch-up needed, formula holds
     let expected = due_date + freq as u64 * 86400;
-    assert_eq!(child.due_date, expected, "child due_date must use parent.due_date, not paid_at");
+    assert_eq!(
+        child.due_date, expected,
+        "child due_date must use parent.due_date, not paid_at"
+    );
     assert_child_not_overdue(child.due_date, paid_at, "late_payment_no_catchup");
 }
 
