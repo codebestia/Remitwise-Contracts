@@ -548,7 +548,8 @@ fn test_execute_paused_contract_returns_empty() {
     assert_eq!(schedule_id, Ok(1));
 
     // Pause contract
-    client.pause(&owner).unwrap();
+    let result = client.try_pause(&owner);
+    assert!(result.is_ok());
 
     set_time(&env, 3_500);
 
@@ -608,7 +609,8 @@ fn test_set_pause_admin_by_owner() {
     let new_pause_admin = Address::generate(&env);
     
     // Owner can set pause admin
-    client.set_pause_admin(&owner, &new_pause_admin).unwrap();
+    let result = client.try_set_pause_admin(&owner, &new_pause_admin);
+    assert!(result.is_ok(), "Owner should be able to set pause admin");
 
     // Verify storage mutation
     assert_eq!(client.get_pause_admin_public(), Some(new_pause_admin.clone()));
@@ -620,11 +622,13 @@ fn test_set_pause_admin_by_owner() {
         .find(|event| {
             let topics = &event.1;
             topics.len() == 2 && topics.get(1) == Some(&symbol_short!("adm_xfr"))
-        })
-        .expect("adm_xfr event not found");
+        });
+    assert!(adm_xfr_event.is_some(), "adm_xfr event should be emitted");
 
-    let (_, _, data) = adm_xfr_event;
-    let (old_admin, new_admin): (Option<Address>, Address) = data.try_into_val(&env).unwrap();
+    let (_, _, data) = adm_xfr_event.unwrap();
+    let parse_result = data.try_into_val::<(Option<Address>, Address)>(&env);
+    assert!(parse_result.is_ok(), "Event data should be parseable as (Option<Address>, Address)");
+    let (old_admin, new_admin) = parse_result.unwrap();
     assert_eq!(old_admin, None); // No previous pause admin
     assert_eq!(new_admin, new_pause_admin);
 }
@@ -654,12 +658,14 @@ fn test_set_pause_admin_self_transfer() {
     let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
     let pause_admin = Address::generate(&env);
-    client.set_pause_admin(&owner, &pause_admin).unwrap();
+    let result = client.try_set_pause_admin(&owner, &pause_admin);
+assert!(result.is_ok());
 
     let initial_pause_admin = client.get_pause_admin_public();
 
     // Self-transfer should be idempotent (allowed but no change)
-    client.set_pause_admin(&owner, &pause_admin).unwrap();
+    let result = client.try_set_pause_admin(&owner, &pause_admin);
+assert!(result.is_ok());
 
     // Verify storage unchanged (idempotent)
     assert_eq!(client.get_pause_admin_public(), initial_pause_admin);
@@ -674,11 +680,13 @@ fn test_set_pause_admin_double_transfer() {
     let pause_admin2 = Address::generate(&env);
 
     // First transfer
-    client.set_pause_admin(&owner, &pause_admin1).unwrap();
+    let result = client.try_set_pause_admin(&owner, &pause_admin1);
+    assert!(result.is_ok());
     assert_eq!(client.get_pause_admin_public(), Some(pause_admin1.clone()));
 
     // Second transfer
-    client.set_pause_admin(&owner, &pause_admin2).unwrap();
+    let result = client.try_set_pause_admin(&owner, &pause_admin2);
+    assert!(result.is_ok());
     assert_eq!(client.get_pause_admin_public(), Some(pause_admin2.clone()));
 
     // Verify two events were emitted
@@ -700,10 +708,12 @@ fn test_set_pause_admin_when_paused() {
     let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
     let pause_admin = Address::generate(&env);
-    client.set_pause_admin(&owner, &pause_admin).unwrap();
+    let result = client.try_set_pause_admin(&owner, &pause_admin);
+assert!(result.is_ok());
 
     // Pause the contract
-    client.pause(&pause_admin).unwrap();
+    let result = client.try_pause(&pause_admin);
+    assert!(result.is_ok());
     assert!(client.is_paused());
 
     let new_pause_admin = Address::generate(&env);
@@ -728,7 +738,8 @@ fn test_set_upgrade_admin_by_owner_initial() {
     let new_upgrade_admin = Address::generate(&env);
 
     // Owner can set initial upgrade admin
-    client.set_upgrade_admin(&owner, &new_upgrade_admin).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &new_upgrade_admin);
+    assert!(result.is_ok());
 
     // Verify storage mutation
     assert_eq!(client.get_upgrade_admin_public(), Some(new_upgrade_admin.clone()));
@@ -741,10 +752,13 @@ fn test_set_upgrade_admin_by_owner_initial() {
             let topics = &event.1;
             topics.len() == 2 && topics.get(1) == Some(&symbol_short!("adm_xfr"))
         })
-        .expect("adm_xfr event not found");
+        ;
+    assert!(adm_xfr_event.is_some(), "adm_xfr event should be emitted");
 
-    let (_, _, data) = adm_xfr_event;
-    let (old_admin, new_admin): (Option<Address>, Address) = data.try_into_val(&env).unwrap();
+    let (_, _, data) = adm_xfr_event.unwrap();
+    let parse_result = data.try_into_val::<(Option<Address>, Address)>(&env);
+    assert!(parse_result.is_ok(), "Event data should be parseable");
+    let (old_admin, new_admin) = parse_result.unwrap();
     assert_eq!(old_admin, None); // No previous upgrade admin
     assert_eq!(new_admin, new_upgrade_admin);
 }
@@ -755,12 +769,14 @@ fn test_set_upgrade_admin_by_current_admin() {
     let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
     let upgrade_admin1 = Address::generate(&env);
-    client.set_upgrade_admin(&owner, &upgrade_admin1).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &upgrade_admin1);
+    assert!(result.is_ok());
 
     let upgrade_admin2 = Address::generate(&env);
 
     // Current admin can transfer to new admin
-    client.set_upgrade_admin(&upgrade_admin1, &upgrade_admin2).unwrap();
+    let result = client.try_set_upgrade_admin(&upgrade_admin1, &upgrade_admin2);
+    assert!(result.is_ok());
 
     // Verify storage mutation
     assert_eq!(client.get_upgrade_admin_public(), Some(upgrade_admin2.clone()));
@@ -779,7 +795,9 @@ fn test_set_upgrade_admin_by_current_admin() {
 
     // Check the second event (transfer from admin1 to admin2)
     let (_, _, data) = &adm_xfr_events[1];
-    let (old_admin, new_admin): (Option<Address>, Address) = data.try_into_val(&env).unwrap();
+    let parse_result = data.try_into_val::<(Option<Address>, Address)>(&env);
+    assert!(parse_result.is_ok(), "Event data should be parseable");
+    let (old_admin, new_admin) = parse_result.unwrap();
     assert_eq!(old_admin, Some(upgrade_admin1));
     assert_eq!(new_admin, upgrade_admin2);
 }
@@ -800,7 +818,8 @@ fn test_set_upgrade_admin_unauthorized_caller() {
 
     // Test 2: Set an admin first
     let upgrade_admin = Address::generate(&env);
-    client.set_upgrade_admin(&owner, &upgrade_admin).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &upgrade_admin);
+assert!(result.is_ok());
 
     // Test 3: Unauthorized caller when admin is set
     let result = client.try_set_upgrade_admin(&unauthorized_caller, &new_upgrade_admin);
@@ -814,12 +833,14 @@ fn test_set_upgrade_admin_self_transfer() {
     let (client, owner, _token_addr, _) = setup_split(&env, 50, 30, 15, 5);
 
     let upgrade_admin = Address::generate(&env);
-    client.set_upgrade_admin(&owner, &upgrade_admin).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &upgrade_admin);
+assert!(result.is_ok());
 
     let initial_upgrade_admin = client.get_upgrade_admin_public();
 
     // Self-transfer should be idempotent (allowed but no change)
-    client.set_upgrade_admin(&upgrade_admin, &upgrade_admin).unwrap();
+    let result = client.try_set_upgrade_admin(&upgrade_admin, &upgrade_admin);
+    assert!(result.is_ok());
 
     // Verify storage unchanged (idempotent)
     assert_eq!(client.get_upgrade_admin_public(), initial_upgrade_admin);
@@ -834,11 +855,13 @@ fn test_set_upgrade_admin_double_transfer() {
     let upgrade_admin2 = Address::generate(&env);
 
     // First transfer by owner
-    client.set_upgrade_admin(&owner, &upgrade_admin1).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &upgrade_admin1);
+    assert!(result.is_ok());
     assert_eq!(client.get_upgrade_admin_public(), Some(upgrade_admin1.clone()));
 
     // Second transfer by admin1
-    client.set_upgrade_admin(&upgrade_admin1, &upgrade_admin2).unwrap();
+    let result = client.try_set_upgrade_admin(&upgrade_admin1, &upgrade_admin2);
+    assert!(result.is_ok());
     assert_eq!(client.get_upgrade_admin_public(), Some(upgrade_admin2));
 
     // Verify two admin transfer events were emitted
@@ -855,13 +878,17 @@ fn test_set_upgrade_admin_double_transfer() {
 
     // Check the first event (transfer from owner to admin1)
     let (_, _, data) = &adm_xfr_events[0];
-    let (old_admin, new_admin): (Option<Address>, Address) = data.try_into_val(&env).unwrap();
+    let parse_result = data.try_into_val::<(Option<Address>, Address)>(&env);
+    assert!(parse_result.is_ok(), "Event data should be parseable");
+    let (old_admin, new_admin) = parse_result.unwrap();
     assert_eq!(old_admin, None); // No previous upgrade admin
     assert_eq!(new_admin, upgrade_admin1);
 
     // Check the second event (transfer from admin1 to admin2)
     let (_, _, data) = &adm_xfr_events[1];
-    let (old_admin, new_admin): (Option<Address>, Address) = data.try_into_val(&env).unwrap();
+    let parse_result = data.try_into_val::<(Option<Address>, Address)>(&env);
+    assert!(parse_result.is_ok(), "Event data should be parseable");
+    let (old_admin, new_admin) = parse_result.unwrap();
     assert_eq!(old_admin, Some(upgrade_admin1));
     assert_eq!(new_admin, upgrade_admin2);
 }
@@ -875,7 +902,8 @@ fn test_set_upgrade_admin_owner_cannot_override_after_initial_set() {
     let upgrade_admin2 = Address::generate(&env);
 
     // Owner sets initial admin
-    client.set_upgrade_admin(&owner, &upgrade_admin1).unwrap();
+    let result = client.try_set_upgrade_admin(&owner, &upgrade_admin1);
+    assert!(result.is_ok());
     assert_eq!(client.get_upgrade_admin_public(), Some(upgrade_admin1.clone()));
 
     // Owner should NOT be able to override once admin is set
