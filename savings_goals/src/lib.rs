@@ -1093,6 +1093,21 @@ impl SavingsGoalContract {
                 INSTANCE_BUMP_AMOUNT,
             );
 
+            // Emit standardized event for indexers
+            RemitwiseEvents::emit(
+                &env,
+                EventCategory::Transaction,
+                EventPriority::Medium,
+                FUNDS_ADDED,
+                FundsAddedEvent {
+                    goal_id: item.goal_id,
+                    owner: caller.clone(),
+                    amount: item.amount,
+                    new_total,
+                    timestamp: now,
+                },
+            );
+
             // Module-specific simple event
             env.events().publish(
                 (symbol_short!("savings"), SavingsEvent::FundsAdded),
@@ -1758,7 +1773,6 @@ impl SavingsGoalContract {
         if snapshot.schema_version < MIN_SUPPORTED_SCHEMA_VERSION
             || snapshot.schema_version > SCHEMA_VERSION
         {
-            Self::append_audit(&env, symbol_short!("import"), &caller, false);
             return Err(SavingsGoalError::UnsupportedVersion);
         }
         let expected = Self::compute_goals_checksum(

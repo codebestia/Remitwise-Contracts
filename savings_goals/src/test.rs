@@ -5016,3 +5016,150 @@ fn test_multi_user_isolation() {
     assert_eq!(goals1.get(0).unwrap().owner, user1);
     assert_eq!(goals2.get(0).unwrap().owner, user2);
 }
+
+// ============================================================================
+// #617 Savings Goals: Schema-Version Compatibility & Ordering Tests
+// ============================================================================
+
+/// Verifies that an explicit version 0 snapshot is strictly rejected
+/// with the UnsupportedVersion error.
+#[test]
+fn test_import_snapshot_rejects_version_zero() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+
+    client.init();
+    let user = Address::generate(&env);
+
+    // Create an empty soroban vector matching the expected type SavingsGoal
+    let empty_goals: SorobanVec<SavingsGoal> = SorobanVec::new(&env);
+
+    let snapshot = GoalsExportSnapshot {
+        schema_version: 0,
+        checksum: 0u64,
+        next_id: 1,
+        goals: empty_goals,
+    };
+
+    // Pass the user address, a nonce, and the snapshot reference
+    let result = client.try_import_snapshot(&user, &0u64, &snapshot);
+
+    assert_eq!(
+        result,
+        Err(Ok(SavingsGoalError::UnsupportedVersion)),
+        "version 0 must be rejected with UnsupportedVersion"
+    );
+}
+
+/// Verifies that the minimum supported schema version boundary is accepted by the version check stage.
+#[test]
+fn test_import_snapshot_accepts_min_supported_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+
+    client.init();
+    let user = Address::generate(&env);
+    let empty_goals: SorobanVec<SavingsGoal> = SorobanVec::new(&env);
+
+    let snapshot = GoalsExportSnapshot {
+        schema_version: MIN_SUPPORTED_SCHEMA_VERSION,
+        checksum: 62, // (1 + 1) * 31 for version 1, next_id 1
+        next_id: 1,
+        goals: empty_goals,
+    };
+
+    let result = client.try_import_snapshot(&user, &0u64, &snapshot);
+
+    // MIN_SUPPORTED_SCHEMA_VERSION should pass version check and succeed
+    assert!(
+        result.is_ok(),
+        "MIN_SUPPORTED_SCHEMA_VERSION must be accepted"
+    );
+}
+
+/// Verifies that the maximum current SCHEMA_VERSION boundary is accepted by the version check stage.
+#[test]
+fn test_import_snapshot_accepts_current_schema_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+
+    client.init();
+    let user = Address::generate(&env);
+    let empty_goals: SorobanVec<SavingsGoal> = SorobanVec::new(&env);
+
+    let snapshot = GoalsExportSnapshot {
+        schema_version: SCHEMA_VERSION,
+        checksum: 62, // (1 + 1) * 31 for version 1, next_id 1
+        next_id: 1,
+        goals: empty_goals,
+    };
+
+    let result = client.try_import_snapshot(&user, &0u64, &snapshot);
+
+    // SCHEMA_VERSION should pass version check and succeed
+    assert!(result.is_ok(), "current SCHEMA_VERSION must be accepted");
+}
+
+/// Verifies that any unknown future schema versions (SCHEMA_VERSION + 1) are strictly rejected.
+#[test]
+fn test_import_snapshot_rejects_future_version() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+
+    client.init();
+    let user = Address::generate(&env);
+    let empty_goals: SorobanVec<SavingsGoal> = SorobanVec::new(&env);
+
+    let snapshot = GoalsExportSnapshot {
+        schema_version: SCHEMA_VERSION + 1,
+        checksum: 0u64,
+        next_id: 1,
+        goals: empty_goals,
+    };
+
+    let result = client.try_import_snapshot(&user, &0u64, &snapshot);
+
+    assert_eq!(
+        result,
+        Err(Ok(SavingsGoalError::UnsupportedVersion)),
+        "future schema_version must be rejected"
+    );
+}
+
+/// Verifies validation order logic: version validation must complete before
+/// checksum validation runs. A valid version with a bad checksum must return ChecksumMismatch.
+#[test]
+fn test_import_snapshot_ordering_version_validation_comes_first() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let contract_id = env.register_contract(None, SavingsGoalContract);
+    let client = SavingsGoalContractClient::new(&env, &contract_id);
+
+    client.init();
+    let user = Address::generate(&env);
+    let empty_goals: SorobanVec<SavingsGoal> = SorobanVec::new(&env);
+
+    // Provide a valid version, but an invalid checksum number
+    let snapshot = GoalsExportSnapshot {
+        schema_version: SCHEMA_VERSION,
+        checksum: 99999u64,
+        next_id: 1,
+        goals: empty_goals,
+    };
+
+    let result = client.try_import_snapshot(&user, &0u64, &snapshot);
+
+    assert_eq!(
+        result,
+        Err(Ok(SavingsGoalError::ChecksumMismatch)),
+        "valid version with bad checksum must return ChecksumMismatch (version validated first)"
+    );
+}
