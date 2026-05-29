@@ -144,8 +144,9 @@ fn bench_get_total_monthly_premium_worst_case() {
 
     let name = String::from_str(&env, "BenchPolicy");
     let coverage_type = CoverageType::Health;
-    for _ in 0..MAX_POLICIES_PER_OWNER {
-        client.create_policy(&owner, &name, &coverage_type, &100i128, &10_000i128, &None);
+    client.init(&owner);
+    for _ in 0..100 {
+        client.create_policy(&owner, &name, &coverage_type, &100i128, &10_000i128);
     }
 
     let expected_total = MAX_POLICIES_PER_OWNER as i128 * 100i128;

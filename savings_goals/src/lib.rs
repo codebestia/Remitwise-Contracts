@@ -5,6 +5,8 @@ use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Map, String,
     Symbol, Vec,
 };
+extern crate alloc;
+use alloc::string::ToString;
 
 // Event topics
 const GOAL_CREATED: Symbol = symbol_short!("created");
@@ -168,6 +170,19 @@ pub struct SavingsSchedule {
     pub missed_count: u32,
 }
 
+#[contracterror]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum SavingsGoalsError {
+    InvalidAmount = 1,
+    GoalNotFound = 2,
+    Unauthorized = 3,
+    GoalLocked = 4,
+    InsufficientBalance = 5,
+    Overflow = 6,
+    InvalidGoalName = 7,
+}
+
 #[contracttype]
 #[derive(Clone)]
 pub enum SavingsEvent {
@@ -248,12 +263,7 @@ pub enum SavingsGoalError {
     TargetAmountMustBePositive = 5,
     UnsupportedVersion = 6,
     ChecksumMismatch = 7,
-    InvalidAmount = 8,
-    Overflow = 9,
-    InvalidTagContent = 10,
     InvalidGoalName = 11,
-    GoalCapReached = 12,
-    BatchTooLarge = 14,
 }
 #[contract]
 pub struct SavingsGoalContract;
@@ -305,31 +315,20 @@ impl SavingsGoalContract {
         }
     }
 
-    /// Validates goal name for security and storage constraints.
-    ///
-    /// # Requirements
-    /// - Name must not be empty
-    /// - Name byte length must not exceed MAX_GOAL_NAME_LEN_BYTES
-    ///
-    /// # Arguments
-    /// - `name`: The goal name to validate
-    ///
-    /// # Returns
-    /// - `Ok(())` if name is valid
-    /// - `Err(SavingsGoalError::InvalidGoalName)` if name violates constraints
-    fn validate_goal_name(name: &String) -> Result<(), SavingsGoalError> {
-        let byte_len = name.len();
-
-        // Check for empty name
-        if byte_len == 0 {
-            return Err(SavingsGoalError::InvalidGoalName);
+    fn validate_goal_name(name: &String) -> Result<(), SavingsGoalsError> {
+        let name_len = name.len();
+        if name_len == 0 || name_len > 32 {
+            return Err(SavingsGoalsError::InvalidGoalName);
         }
-
-        // Check for max byte length
-        if byte_len > MAX_GOAL_NAME_LEN_BYTES {
-            return Err(SavingsGoalError::InvalidGoalName);
+        
+        let mut string_bytes = alloc::vec::Vec::new();
+        name.to_string().as_bytes().iter().for_each(|&b| string_bytes.push(b));
+        for byte in string_bytes {
+            // Allow printable ASCII characters (32 to 126 inclusive)
+            if byte < 32 || byte > 126 {
+                return Err(SavingsGoalsError::InvalidGoalName);
+            }
         }
-
         Ok(())
     }
 
@@ -788,6 +787,11 @@ impl SavingsGoalContract {
         if Self::get_owner_goal_count(&env, &owner) >= MAX_GOALS_PER_OWNER {
             Self::append_audit(&env, symbol_short!("create"), &owner, false);
             return Err(SavingsGoalError::GoalCapReached);
+        }
+
+        if let Err(e) = Self::validate_goal_name(&name) {
+            Self::append_audit(&env, symbol_short!("create"), &owner, false);
+            return Err(e);
         }
 
         Self::extend_instance_ttl(&env);
