@@ -619,7 +619,7 @@ impl SavingsGoalContract {
             .persistent()
             .get(&key)
             .unwrap_or_else(|| Vec::new(env));
-        
+
         // Avoid duplicate goal IDs in the index
         let mut exists = false;
         for id in ids.iter() {
@@ -631,7 +631,7 @@ impl SavingsGoalContract {
         if !exists {
             ids.push_back(goal_id);
         }
-        
+
         env.storage().persistent().set(&key, &ids);
         env.storage().persistent().extend_ttl(
             &key,
@@ -1524,14 +1524,22 @@ impl SavingsGoalContract {
     /// # Notes
     /// - Uses the tag index for O(matching goals) performance instead of scanning all goals.
     /// - Tag is canonicalized (lowercased) to match storage keys.
-    pub fn get_goals_by_tag(env: Env, owner: Address, tag: String, cursor: u32, limit: u32) -> GoalPage {
+    pub fn get_goals_by_tag(
+        env: Env,
+        owner: Address,
+        tag: String,
+        cursor: u32,
+        limit: u32,
+    ) -> GoalPage {
         let limit = Self::clamp_limit(limit);
 
         // Canonicalize the tag for lookup
         let mut tags_vec = Vec::new(&env);
         tags_vec.push_back(tag.clone());
         let normalized = Self::validate_and_normalize_tags(&env, &tags_vec);
-        let canonical_tag = normalized.get(0).unwrap_or_else(|| panic!("Tag normalization failed"));
+        let canonical_tag = normalized
+            .get(0)
+            .unwrap_or_else(|| panic!("Tag normalization failed"));
 
         let ids: Vec<u32> = env
             .storage()
@@ -1697,12 +1705,12 @@ impl SavingsGoalContract {
             .persistent()
             .remove(&DataKey::ArchivedGoal(goal_id));
         let restored_goal = archived_goal.into_goal();
-        
+
         // Re-index goal in all tag indexes
         for tag in restored_goal.tags.iter() {
             Self::add_to_tag_index(&env, &caller, &tag, goal_id);
         }
-        
+
         env.storage()
             .persistent()
             .set(&DataKey::Goal(goal_id), &restored_goal);

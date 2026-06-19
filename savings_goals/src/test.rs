@@ -74,10 +74,7 @@ fn test_create_goal_empty_name_fails() {
     let name = String::from_str(&env, "");
     let res = client.try_create_goal(&user, &name, &1000, &1735689600);
     assert!(res.is_err());
-    assert_eq!(
-        res.unwrap_err().unwrap(),
-        SavingsGoalError::InvalidGoalName
-    );
+    assert_eq!(res.unwrap_err().unwrap(), SavingsGoalError::InvalidGoalName);
 }
 
 #[test]
@@ -108,10 +105,7 @@ fn test_create_goal_over_max_len_fails() {
     let name = String::from_str(&env, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA");
     let res = client.try_create_goal(&user, &name, &1000, &1735689600);
     assert!(res.is_err());
-    assert_eq!(
-        res.unwrap_err().unwrap(),
-        SavingsGoalError::InvalidGoalName
-    );
+    assert_eq!(res.unwrap_err().unwrap(), SavingsGoalError::InvalidGoalName);
 }
 
 #[test]
@@ -127,10 +121,7 @@ fn test_create_goal_control_char_fails() {
     let name = String::from_str(&env, "Goal\nName");
     let res = client.try_create_goal(&user, &name, &1000, &1735689600);
     assert!(res.is_err());
-    assert_eq!(
-        res.unwrap_err().unwrap(),
-        SavingsGoalError::InvalidGoalName
-    );
+    assert_eq!(res.unwrap_err().unwrap(), SavingsGoalError::InvalidGoalName);
 }
 // In production or integration, init() may be called more than once (e.g. by
 // different entrypoints or upgrade paths). These tests lock in that:
@@ -5235,7 +5226,6 @@ fn test_import_snapshot_ordering_version_validation_comes_first() {
     );
 }
 
-
 // ============================================================================
 // Tag Index Tests
 // ============================================================================
@@ -5277,7 +5267,13 @@ fn test_add_tags_maintains_index() {
     let page = client.get_goals_by_tag(&user, &tag, &0, &50);
 
     assert_eq!(page.count, 1);
-    assert_eq!(page.items.get(0).unwrap_or_else(|| panic!("Goal not found")).id, goal_id);
+    assert_eq!(
+        page.items
+            .get(0)
+            .unwrap_or_else(|| panic!("Goal not found"))
+            .id,
+        goal_id
+    );
 }
 
 #[test]
@@ -5456,7 +5452,8 @@ fn test_multiple_tags_per_goal() {
     let page_travel = client.get_goals_by_tag(&user, &String::from_str(&env, "travel"), &0, &50);
     assert_eq!(page_travel.count, 1);
 
-    let page_adventure = client.get_goals_by_tag(&user, &String::from_str(&env, "adventure"), &0, &50);
+    let page_adventure =
+        client.get_goals_by_tag(&user, &String::from_str(&env, "adventure"), &0, &50);
     assert_eq!(page_adventure.count, 1);
 
     let page_savings = client.get_goals_by_tag(&user, &String::from_str(&env, "savings"), &0, &50);
@@ -5477,7 +5474,7 @@ fn test_tag_index_no_duplicate_goal_ids() {
 
     let mut tags = SorobanVec::new(&env);
     tags.push_back(String::from_str(&env, "Emergency"));
-    
+
     // Add same tag twice
     client.add_tags_to_goal(&user, &goal_id, &tags);
     client.add_tags_to_goal(&user, &goal_id, &tags);

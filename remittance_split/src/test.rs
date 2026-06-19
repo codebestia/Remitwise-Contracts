@@ -847,7 +847,9 @@ fn test_request_hash_mismatch_nonce_reuse_new_deadline() {
     );
 }
 
-fn setup_request_hash_distribution(env: &Env) -> (
+fn setup_request_hash_distribution(
+    env: &Env,
+) -> (
     RemittanceSplitClient<'_>,
     Address,
     Address,
@@ -986,7 +988,10 @@ fn test_request_hash_hashed_path_rejects_used_nonce() {
     stellar_client.mint(&owner, &(request.total_amount * 2));
     let hash = client.get_request_hash(&request);
 
-    assert_eq!(client.try_distribute_usdc_hashed(&request, &hash), Ok(Ok(true)));
+    assert_eq!(
+        client.try_distribute_usdc_hashed(&request, &hash),
+        Ok(Ok(true))
+    );
 
     let replay = client.try_distribute_usdc_hashed(&request, &hash);
     assert_eq!(replay, Err(Ok(RemittanceSplitError::NonceAlreadyUsed)));
@@ -1028,7 +1033,10 @@ fn test_request_hash_hashed_path_rejects_self_transfer() {
 
     let result = client.try_distribute_usdc_hashed(&request, &hash);
 
-    assert_eq!(result, Err(Ok(RemittanceSplitError::SelfTransferNotAllowed)));
+    assert_eq!(
+        result,
+        Err(Ok(RemittanceSplitError::SelfTransferNotAllowed))
+    );
 }
 
 #[test]
@@ -1044,7 +1052,10 @@ fn test_request_hash_hashed_path_rejects_untrusted_token_contract() {
 
     let result = client.try_distribute_usdc_hashed(&request, &hash);
 
-    assert_eq!(result, Err(Ok(RemittanceSplitError::UntrustedTokenContract)));
+    assert_eq!(
+        result,
+        Err(Ok(RemittanceSplitError::UntrustedTokenContract))
+    );
 }
 
 // ============================================================================
@@ -1424,7 +1435,9 @@ fn test_execute_mixed_due_not_due() {
 //
 // Security: expired/invalid deadlines must NOT advance the nonce.
 
-fn setup_signed_distribution(env: &Env) -> (
+fn setup_signed_distribution(
+    env: &Env,
+) -> (
     RemittanceSplitClient<'_>,
     Address,
     Address,
@@ -1478,11 +1491,11 @@ fn test_deadline_zero_is_invalid() {
     let now = env.ledger().timestamp();
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, 0);
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
-    assert_eq!(
-        result,
-        Err(Ok(RemittanceSplitError::InvalidDeadline))
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
     );
+    assert_eq!(result, Err(Ok(RemittanceSplitError::InvalidDeadline)));
 }
 
 /// deadline == now must be rejected (DeadlineExpired)
@@ -1493,11 +1506,11 @@ fn test_deadline_equal_to_now_is_expired() {
     let now = env.ledger().timestamp();
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, now);
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
-    assert_eq!(
-        result,
-        Err(Ok(RemittanceSplitError::DeadlineExpired))
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
     );
+    assert_eq!(result, Err(Ok(RemittanceSplitError::DeadlineExpired)));
 }
 
 /// deadline == now - 1 must be rejected (DeadlineExpired)
@@ -1508,11 +1521,11 @@ fn test_deadline_one_second_past_is_expired() {
     let now = env.ledger().timestamp();
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, now - 1);
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
-    assert_eq!(
-        result,
-        Err(Ok(RemittanceSplitError::DeadlineExpired))
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
     );
+    assert_eq!(result, Err(Ok(RemittanceSplitError::DeadlineExpired)));
 }
 
 /// deadline == now + 1 must be accepted (valid boundary)
@@ -1524,7 +1537,10 @@ fn test_deadline_one_second_future_is_accepted() {
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, now + 1);
     // Should not return DeadlineExpired or InvalidDeadline
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
+    );
     assert!(
         result != Err(Ok(RemittanceSplitError::DeadlineExpired))
             && result != Err(Ok(RemittanceSplitError::InvalidDeadline)),
@@ -1546,7 +1562,10 @@ fn test_deadline_at_max_window_is_accepted() {
         1,
         now + MAX_DEADLINE_WINDOW_SECS,
     );
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
+    );
     assert!(
         result != Err(Ok(RemittanceSplitError::DeadlineExpired))
             && result != Err(Ok(RemittanceSplitError::InvalidDeadline)),
@@ -1568,11 +1587,11 @@ fn test_deadline_beyond_max_window_is_invalid() {
         1,
         now + MAX_DEADLINE_WINDOW_SECS + 1,
     );
-    let result = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
-    assert_eq!(
-        result,
-        Err(Ok(RemittanceSplitError::InvalidDeadline))
+    let result = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
     );
+    assert_eq!(result, Err(Ok(RemittanceSplitError::InvalidDeadline)));
 }
 
 /// Expired deadline must NOT advance the nonce (replay-window safety)
@@ -1585,7 +1604,10 @@ fn test_expired_deadline_does_not_advance_nonce() {
     let nonce_before = client.get_nonce(&owner);
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, now - 1);
-    let _ = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
+    let _ = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
+    );
 
     let nonce_after = client.get_nonce(&owner);
     assert_eq!(
@@ -1603,7 +1625,10 @@ fn test_invalid_deadline_does_not_advance_nonce() {
     let nonce_before = client.get_nonce(&owner);
 
     let request = make_request(&env, token_addr.clone(), owner.clone(), 1, 0);
-    let _ = client.try_distribute_usdc_hashed(&request, &RemittanceSplit::get_request_hash(env.clone(), request.clone()));
+    let _ = client.try_distribute_usdc_hashed(
+        &request,
+        &RemittanceSplit::get_request_hash(env.clone(), request.clone()),
+    );
 
     let nonce_after = client.get_nonce(&owner);
     assert_eq!(
