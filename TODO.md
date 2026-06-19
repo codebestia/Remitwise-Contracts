@@ -5,4 +5,5 @@
 - [ ] Update `benchmarks/baseline.json` and `benchmarks/thresholds.json` with new `savings_goals.batch_add_to_goals` scenarios (cpu/mem baselines + appropriate thresholds).
 - [ ] Update `SCHEDULE_GAS_BENCHMARKS_SUMMARY.md` (or relevant docs) to include the new savings_goals batch_add_to_goals benchmark results/scenarios.
 - [ ] Run `cargo test -p savings_goals --test test` and `cargo test -p savings_goals --test gas_bench` (and any bench-regression harness) to ensure CI passes.
-
+- [x] Add fan-out dust conservation tests across due remittance schedule sweeps in `remittance_split/src/test.rs`.
+- [x] Document aggregate batch conservation invariant for remittance split dust in `docs/remittance-split-rounding-policy.md`.
