@@ -46,7 +46,7 @@ fn setup_test() -> (Env, Address) {
     (env, owner)
 }
 
-fn register_orchestrator(env: &Env) -> OrchestratorClient {
+fn register_orchestrator(env: &Env) -> OrchestratorClient<'_> {
     let id = env.register_contract(None, Orchestrator);
     OrchestratorClient::new(env, &id)
 }
@@ -112,7 +112,7 @@ fn test_execute_flow_success() {
     );
 
     // Check lock is released
-    assert_eq!(client.get_execution_state(), false);
+    assert!(!client.get_execution_state());
 }
 
 #[test]
@@ -132,7 +132,7 @@ fn test_lock_released_on_invalid_amount() {
     );
 
     assert!(result.is_err());
-    assert_eq!(client.get_execution_state(), false);
+    assert!(!client.get_execution_state());
 }
 
 #[test]
@@ -161,7 +161,7 @@ fn test_reentrancy_rejection() {
     }
 
     // Check it's still locked (because we set it manually and the call failed before acquiring)
-    assert_eq!(client.get_execution_state(), true);
+    assert!(client.get_execution_state());
 }
 
 #[test]
@@ -194,7 +194,7 @@ fn test_lock_recovery_after_failure() {
     // In a test, if we use `try_`, it might behave differently depending on where the panic happens.
     // But since `perform_remittance_flow` is called within the orchestrator, a panic there
     // will roll back the `EXEC_LOCK` set by the orchestrator.
-    assert_eq!(client.get_execution_state(), false);
+    assert!(!client.get_execution_state());
 }
 
 // ---------------------------------------------------------------------------

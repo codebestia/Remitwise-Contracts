@@ -1604,7 +1604,7 @@ impl ReportingContract {
             // 2) Tie-break: bill id ascending
             let mut inserted = false;
             for i in 0..top_bills.len() {
-                let existing = top_bills.get(i).unwrap();
+                let existing = top_bills.get_unchecked(i);
                 let should_insert = if bill.amount > existing.amount {
                     true
                 } else if bill.amount < existing.amount {
@@ -1695,7 +1695,7 @@ impl ReportingContract {
             // 2) Tie-break: savings goal id ascending
             let mut inserted = false;
             for i in 0..top_goals.len() {
-                let existing = top_goals.get(i).unwrap();
+                let existing = top_goals.get_unchecked(i);
                 let should_insert = if goal.target_amount > existing.target_amount {
                     true
                 } else if goal.target_amount < existing.target_amount {
