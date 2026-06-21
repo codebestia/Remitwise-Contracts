@@ -655,8 +655,13 @@ impl FamilyWallet {
         }
 
         if threshold > signer_count {
+            // Must return a typed error for `configure_multisig`'s `Result` API.
             return Err(Error::InvalidThreshold);
         }
+
+
+
+
 
         // Check signer membership and uniqueness in a single pass
         let mut checked: Map<Address, bool> = Map::new(&env);
@@ -844,7 +849,21 @@ impl FamilyWallet {
 
         pending_tx.signatures.push_back(signer.clone());
 
-        if pending_tx.signatures.len() >= config.threshold {
+        // Quorum is reached only when the number of signatures from *currently configured* signers
+        // meets the threshold. This prevents stale approvals from signers that were rotated out
+        // (or removed) from unlocking a proposal.
+        let mut authorized_sig_count = 0u32;
+        for sig in pending_tx.signatures.iter() {
+            for authorized_signer in config.signers.iter() {
+                if authorized_signer.clone() == sig.clone() {
+                    authorized_sig_count += 1;
+                    break;
+                }
+            }
+        }
+
+        if authorized_sig_count >= config.threshold {
+
             let executed = Self::execute_transaction_internal(
                 &env,
                 &pending_tx.proposer,
