@@ -360,3 +360,147 @@ fn test_no_sch_miss_event_when_no_drift() {
 
     assert!(miss_event.is_none(), "no sch_miss event when missed_count is 0");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// InactiveSchedule semantics
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Cancelling an already-cancelled schedule must return `InactiveSchedule`.
+#[test]
+fn test_cancel_already_cancelled_returns_inactive_error() {
+    let env = Env::default();
+    let (owner, client) = setup(&env);
+
+    let id = client.create_remittance_schedule(&owner, &500, &T0, &INTERVAL);
+    client.cancel_remittance_schedule(&owner, &id);
+
+    let result = client.try_cancel_remittance_schedule(&owner, &id);
+    assert_eq!(
+        result,
+        Err(Ok(RemittanceSplitError::InactiveSchedule)),
+        "second cancel must return InactiveSchedule"
+    );
+}
+
+/// Modifying an inactive (cancelled) schedule must return `InactiveSchedule`.
+#[test]
+fn test_modify_inactive_schedule_returns_inactive_error() {
+    let env = Env::default();
+    let (owner, client) = setup(&env);
+
+    let id = client.create_remittance_schedule(&owner, &500, &T0, &INTERVAL);
+    client.cancel_remittance_schedule(&owner, &id);
+
+    let new_due = T0 + 10 * INTERVAL;
+    let result = client.try_modify_remittance_schedule(&owner, &id, &500, &new_due, &INTERVAL);
+    assert_eq!(
+        result,
+        Err(Ok(RemittanceSplitError::InactiveSchedule)),
+        "modify of inactive schedule must return InactiveSchedule"
+    );
+}
+
+/// The executor must skip a schedule that was cancelled before its due time.
+/// `last_executed` must remain `None`.
+#[test]
+fn test_executor_skips_cancelled_schedule() {
+    let env = Env::default();
+    let (owner, client) = setup(&env);
+
+    let id = client.create_remittance_schedule(&owner, &500, &T0, &INTERVAL);
+    client.cancel_remittance_schedule(&owner, &id);
+
+    env.ledger().set_timestamp(T0);
+    let executed = client.execute_due_remittance_schedules();
+
+    assert_eq!(executed.len(), 0, "cancelled schedule must not be executed");
+
+    let sch = client.get_remittance_schedule(&id).unwrap();
+    assert!(!sch.active);
+    assert_eq!(
+        sch.last_executed, None,
+        "last_executed must remain None for a skipped cancelled schedule"
+    );
+}
+
+/// After a one-off schedule executes it becomes inactive (`active = false`).
+/// Attempting to cancel it afterwards must return `InactiveSchedule`.
+#[test]
+fn test_executed_oneoff_is_inactive_and_cannot_be_recancelled() {
+    let env = Env::default();
+    let (owner, client) = setup(&env);
+
+    let id = client.create_remittance_schedule(&owner, &500, &T0, &0); // one-off
+
+    env.ledger().set_timestamp(T0);
+    let executed = client.execute_due_remittance_schedules();
+    assert_eq!(executed.len(), 1);
+
+    let sch = client.get_remittance_schedule(&id).unwrap();
+    assert!(!sch.active, "one-off deactivates immediately after execution");
+
+    let result = client.try_cancel_remittance_schedule(&owner, &id);
+    assert_eq!(
+        result,
+        Err(Ok(RemittanceSplitError::InactiveSchedule)),
+        "cancelling a post-execution one-off must return InactiveSchedule"
+    );
+}
+
+/// The executor processes only the active due schedule in a mixed set containing
+/// a cancelled schedule and a not-yet-due future schedule.
+#[test]
+fn test_executor_mixed_active_inactive_only_due_active_executed() {
+    let env = Env::default();
+    let (owner, client) = setup(&env);
+
+    // Cancelled before its due time — must be skipped.
+    let id_cancelled = client.create_remittance_schedule(&owner, &100, &T0, &INTERVAL);
+    client.cancel_remittance_schedule(&owner, &id_cancelled);
+
+    // Active and due — must execute.
+    let id_active = client.create_remittance_schedule(&owner, &200, &T0, &INTERVAL);
+
+    // Active but not yet due — must be skipped.
+    let id_future =
+        client.create_remittance_schedule(&owner, &300, &(T0 + 10 * INTERVAL), &INTERVAL);
+
+    env.ledger().set_timestamp(T0);
+    let executed = client.execute_due_remittance_schedules();
+
+    assert_eq!(executed.len(), 1, "only the active due schedule executes");
+    assert_eq!(
+        executed.get(0).unwrap(),
+        id_active,
+        "the executed schedule must be the active due one"
+    );
+
+    // Verify final states.
+    assert!(!client.get_remittance_schedule(&id_cancelled).unwrap().active);
+    assert_eq!(
+        client
+            .get_remittance_schedule(&id_cancelled)
+            .unwrap()
+            .last_executed,
+        None
+    );
+
+    assert!(client.get_remittance_schedule(&id_active).unwrap().active);
+    assert_eq!(
+        client
+            .get_remittance_schedule(&id_active)
+            .unwrap()
+            .last_executed,
+        Some(T0)
+    );
+
+    assert!(client.get_remittance_schedule(&id_future).unwrap().active);
+    assert_eq!(
+        client
+            .get_remittance_schedule(&id_future)
+            .unwrap()
+            .last_executed,
+        None,
+        "not-yet-due schedule must not be executed"
+    );
+}
